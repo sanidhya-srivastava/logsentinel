@@ -1,0 +1,652 @@
+# =============================================================================
+# LogSentinel — Docker Compose (Local Development)
+# =============================================================================
+# Starts the complete platform locally:
+#   Infrastructure : Zookeeper, Kafka, Elasticsearch, PostgreSQL, Redis
+#   Services       : log-ingestion-api, log-processor, ml-engine,
+#                    alert-service, dashboard-backend
+#   Observability  : Prometheus, Grafana, Alertmanager, Kafka-UI
+#
+# Usage:
+#   make up          → start all services
+#   make down        → stop all services
+#   make logs        → tail all logs
+#   make health      → check health endpoints
+# =============================================================================
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Shared defaults via YAML anchors
+# ---------------------------------------------------------------------------
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+
+x-common-env: &common-env
+  ENVIRONMENT: development
+  LOG_LEVEL: INFO
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  KAFKA_TOPIC_RAW_LOGS: raw-logs
+  KAFKA_TOPIC_PROCESSED_LOGS: processed-logs
+  KAFKA_TOPIC_ANOMALY_ALERTS: anomaly-alerts
+  ELASTICSEARCH_HOST: elasticsearch
+  ELASTICSEARCH_PORT: 9200
+  ELASTICSEARCH_SCHEME: http
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: logsentinel
+  POSTGRES_USER: logsentinel
+  POSTGRES_PASSWORD: logsentinel_dev
+  DATABASE_URL: postgresql+asyncpg://logsentinel:logsentinel_dev@postgres:5432/logsentinel
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_URL: redis://redis:6379/0
+
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  logsentinel-net:
+    driver: bridge
+    name: logsentinel-net
+  monitoring-net:
+    driver: bridge
+    name: logsentinel-monitoring-net
+
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  zookeeper-data:
+    name: logsentinel-zookeeper-data
+  zookeeper-log:
+    name: logsentinel-zookeeper-log
+  kafka-data:
+    name: logsentinel-kafka-data
+  elasticsearch-data:
+    name: logsentinel-elasticsearch-data
+  postgres-data:
+    name: logsentinel-postgres-data
+  redis-data:
+    name: logsentinel-redis-data
+  prometheus-data:
+    name: logsentinel-prometheus-data
+  grafana-data:
+    name: logsentinel-grafana-data
+  ml-models:
+    name: logsentinel-ml-models
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # =========================================================================
+  # INFRASTRUCTURE
+  # =========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Zookeeper — Kafka dependency
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: logsentinel-zookeeper
+    <<: *default-restart
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_SERVER_ID: 1
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    networks:
+      - logsentinel-net
+    ports:
+      - "2181:2181"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "bash", "-c", "/usr/bin/zookeeper-shell localhost:2181 ls / > /dev/null 2>&1 || zkServer.sh status"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka — Message streaming backbone
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: logsentinel-kafka
+    <<: *default-restart
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: kafka
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - logsentinel-net
+    ports:
+      - "29092:29092"   # external access from host machine
+      - "9092:9092"     # internal cluster access
+      - "9101:9101"     # JMX
+    healthcheck:
+      <<: *healthcheck-defaults
+      test:
+        [
+          "CMD",
+          "kafka-broker-api-versions",
+          "--bootstrap-server",
+          "localhost:9092",
+        ]
+      start_period: 45s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka Init — creates topics on startup
+  # ---------------------------------------------------------------------------
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: logsentinel-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - logsentinel-net
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Waiting for Kafka to be ready...'
+      kafka-topics --bootstrap-server kafka:9092 --list
+
+      echo 'Creating topic: raw-logs'
+      kafka-topics --bootstrap-server kafka:9092 \
+        --create --if-not-exists \
+        --topic raw-logs \
+        --partitions 3 \
+        --replication-factor 1
+
+      echo 'Creating topic: processed-logs'
+      kafka-topics --bootstrap-server kafka:9092 \
+        --create --if-not-exists \
+        --topic processed-logs \
+        --partitions 3 \
+        --replication-factor 1
+
+      echo 'Creating topic: anomaly-alerts'
+      kafka-topics --bootstrap-server kafka:9092 \
+        --create --if-not-exists \
+        --topic anomaly-alerts \
+        --partitions 1 \
+        --replication-factor 1
+
+      echo 'Topics created:'
+      kafka-topics --bootstrap-server kafka:9092 --list
+      echo 'Kafka init complete.'
+      "
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka UI — web-based Kafka management
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: logsentinel-kafka-ui
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: logsentinel-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: "true"
+    networks:
+      - logsentinel-net
+    ports:
+      - "8090:8080"
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Elasticsearch — log storage and search
+  # ---------------------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: logsentinel-elasticsearch
+    <<: *default-restart
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+      - cluster.name=logsentinel
+      - node.name=es-node-1
+      - network.host=0.0.0.0
+      - http.port=9200
+      - indices.lifecycle.poll_interval=1m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - logsentinel-net
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'",
+        ]
+      start_period: 60s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — alert metadata and history
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15.5-alpine
+    container_name: logsentinel-postgres
+    <<: *default-restart
+    environment:
+      POSTGRES_DB: logsentinel
+      POSTGRES_USER: logsentinel
+      POSTGRES_PASSWORD: logsentinel_dev
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - logsentinel-net
+    ports:
+      - "5432:5432"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U logsentinel -d logsentinel"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Redis — alert deduplication and caching
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: logsentinel-redis
+    <<: *default-restart
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --appendonly no
+    volumes:
+      - redis-data:/data
+    networks:
+      - logsentinel-net
+    ports:
+      - "6379:6379"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+    logging: *default-logging
+
+
+  # =========================================================================
+  # APPLICATION SERVICES
+  # =========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Log Ingestion API — receives logs via REST and publishes to Kafka
+  # ---------------------------------------------------------------------------
+  log-ingestion-api:
+    build:
+      context: ./services/log-ingestion-api
+      dockerfile: Dockerfile
+      target: runtime
+    image: logsentinel/log-ingestion-api:dev
+    container_name: logsentinel-log-ingestion-api
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      SERVICE_NAME: log-ingestion-api
+      INGESTION_API_HOST: "0.0.0.0"
+      INGESTION_API_PORT: "8000"
+      INGESTION_API_WORKERS: "2"
+    networks:
+      - logsentinel-net
+    ports:
+      - "8000:8000"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      start_period: 20s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Log Processor — Kafka consumer that cleans, enriches, indexes logs
+  # ---------------------------------------------------------------------------
+  log-processor:
+    build:
+      context: ./services/log-processor
+      dockerfile: Dockerfile
+      target: runtime
+    image: logsentinel/log-processor:dev
+    container_name: logsentinel-log-processor
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SERVICE_NAME: log-processor
+      KAFKA_CONSUMER_GROUP: log-processor-group
+      KAFKA_AUTO_OFFSET_RESET: earliest
+    networks:
+      - logsentinel-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # ML Engine — Isolation Forest inference API + Kafka consumer
+  # ---------------------------------------------------------------------------
+  ml-engine:
+    build:
+      context: ./services/ml-engine
+      dockerfile: Dockerfile
+      target: runtime
+    image: logsentinel/ml-engine:dev
+    container_name: logsentinel-ml-engine
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      SERVICE_NAME: ml-engine
+      ML_ENGINE_HOST: "0.0.0.0"
+      ML_ENGINE_PORT: "8001"
+      ML_ENGINE_WORKERS: "1"
+      KAFKA_CONSUMER_GROUP: ml-engine-group
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      ML_MODEL_PATH: /app/models/isolation_forest.joblib
+      ML_SCALER_PATH: /app/models/scaler.joblib
+      ML_CONTAMINATION: "0.05"
+      ML_ANOMALY_SCORE_THRESHOLD: "0.0"
+    volumes:
+      # Mount the trained model files into the container
+      - ml-models:/app/models
+      # Also mount the local ml/models/ directory for dev convenience
+      - ./ml/models:/app/models:ro
+    networks:
+      - logsentinel-net
+    ports:
+      - "8001:8001"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      start_period: 30s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Alert Service — deduplicates anomalies and sends Slack/Email alerts
+  # ---------------------------------------------------------------------------
+  alert-service:
+    build:
+      context: ./services/alert-service
+      dockerfile: Dockerfile
+      target: runtime
+    image: logsentinel/alert-service:dev
+    container_name: logsentinel-alert-service
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SERVICE_NAME: alert-service
+      KAFKA_CONSUMER_GROUP: alert-service-group
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      ALERT_DEDUP_TTL_SECONDS: "3600"
+      ALERT_COOLDOWN_SECONDS: "300"
+      ALERT_MAX_RETRIES: "3"
+      # Slack (override with real webhook in .env)
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/PLACEHOLDER}
+      SLACK_CHANNEL: ${SLACK_CHANNEL:-#logsentinel-alerts}
+      SLACK_ENABLED: ${SLACK_ENABLED:-false}
+      # Email (override in .env)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-logsentinel@example.com}
+      SMTP_TO_EMAILS: ${SMTP_TO_EMAILS:-ops@example.com}
+      SMTP_USE_TLS: "true"
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+    networks:
+      - logsentinel-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Dashboard Backend — query API for Grafana and frontend
+  # ---------------------------------------------------------------------------
+  dashboard-backend:
+    build:
+      context: ./services/dashboard-backend
+      dockerfile: Dockerfile
+      target: runtime
+    image: logsentinel/dashboard-backend:dev
+    container_name: logsentinel-dashboard-backend
+    <<: *default-restart
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      SERVICE_NAME: dashboard-backend
+      DASHBOARD_API_HOST: "0.0.0.0"
+      DASHBOARD_API_PORT: "8002"
+      DASHBOARD_API_WORKERS: "2"
+      DASHBOARD_DEFAULT_PAGE_SIZE: "20"
+      DASHBOARD_MAX_PAGE_SIZE: "100"
+      DASHBOARD_STATS_CACHE_TTL: "10"
+    networks:
+      - logsentinel-net
+      - monitoring-net
+    ports:
+      - "8002:8002"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
+      start_period: 20s
+    logging: *default-logging
+
+
+  # =========================================================================
+  # OBSERVABILITY STACK
+  # =========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — metrics collection
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.47.2
+    container_name: logsentinel-prometheus
+    <<: *default-restart
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.size=5GB"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - logsentinel-net
+      - monitoring-net
+    ports:
+      - "9090:9090"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Grafana — dashboards
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: logsentinel-grafana
+    <<: *default-restart
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/logsentinel.json
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_LOG_LEVEL: warn
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoring-net
+    ports:
+      - "3000:3000"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Alertmanager — alert routing and deduplication for Prometheus alerts
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: logsentinel-alertmanager
+    <<: *default-restart
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.external-url=http://localhost:9093"
+    volumes:
+      - ./monitoring/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - monitoring-net
+    ports:
+      - "9093:9093"
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter — host/container metrics for Prometheus
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: logsentinel-node-exporter
+    <<: *default-restart
+    command:
+      - "--path.rootfs=/host"
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    networks:
+      - monitoring-net
+    ports:
+      - "9100:9100"
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka Exporter — Kafka metrics for Prometheus
+  # ---------------------------------------------------------------------------
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: logsentinel-kafka-exporter
+    <<: *default-restart
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--web.listen-address=:9308"
+      - "--topic.filter=.*"
+      - "--group.filter=.*"
+    networks:
+      - logsentinel-net
+      - monitoring-net
+    ports:
+      - "9308:9308"
+    logging: *default-logging

@@ -1,0 +1,181 @@
+# =============================================================================
+# LogSentinel — Helm Chart Default Values
+# =============================================================================
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: "gp3"
+
+# Namespace
+namespace: logsentinel
+
+# Image tag applied to all services (override in CI with commit SHA)
+imageTag: "latest"
+imageRepository: "your-dockerhub"
+imagePullPolicy: Always
+
+# =============================================================================
+# Service settings
+# =============================================================================
+logIngestionApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "your-dockerhub/logsentinel-ingestion-api"
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+logProcessor:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "your-dockerhub/logsentinel-log-processor"
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+
+mlEngine:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "your-dockerhub/logsentinel-ml-engine"
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8001
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+  modelPath: "/app/models/isolation_forest.joblib"
+
+alertService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "your-dockerhub/logsentinel-alert-service"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+dashboardBackend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "your-dockerhub/logsentinel-dashboard-backend"
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8002
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# =============================================================================
+# Infrastructure components
+# =============================================================================
+kafka:
+  enabled: true
+  replicaCount: 1
+
+elasticsearch:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  volumeClaimTemplate:
+    storageClassName: "gp3"
+    resources:
+      requests:
+        storage: 50Gi
+
+postgresql:
+  enabled: true
+  auth:
+    database: logsentinel
+    username: logsentinel
+    existingSecret: logsentinel-secrets
+    secretKeys:
+      adminPasswordKey: POSTGRES_PASSWORD
+  primary:
+    persistence:
+      storageClass: "gp3"
+      size: 20Gi
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      storageClass: "gp3"
+      size: 5Gi
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  enabled: true
+  className: nginx
+  host: logsentinel.yourdomain.com
+  tls:
+    enabled: true
+    secretName: logsentinel-tls
+
+# =============================================================================
+# Monitoring
+# =============================================================================
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 15s
+
+# =============================================================================
+# Secrets reference (K8s Secret must exist before deploying)
+# =============================================================================
+existingSecret: logsentinel-secrets

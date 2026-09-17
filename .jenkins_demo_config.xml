@@ -1,0 +1,49 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+  <description>Local demo pipeline for LogSentinel lint + unit tests.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>pipeline {
+  agent any
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+  }
+
+  environment {
+    HOST_REPO_PATH = '/home/arnab/CODE/logsentinel'
+  }
+
+  stages {
+    stage('Lint and Unit Tests') {
+      steps {
+        sh '''
+          set -eux
+          docker run --rm -v "$HOST_REPO_PATH":/workspace -w /workspace python:3.11-slim bash -lc '
+            set -eux
+            rm -rf .venv-ci
+            python -m venv .venv-ci
+            . .venv-ci/bin/activate
+            python -m pip install --upgrade pip setuptools wheel
+            python -m pip install -r requirements.txt
+            python -m pip install flake8 black isort pytest pytest-cov pytest-asyncio httpx testcontainers locust
+            black --check --diff services/ ml/ tests/
+            flake8 services/ ml/ tests/ --max-line-length=100 --exclude=__pycache__,.venv,.venv-ci,migrations --ignore=E203,W503
+            isort --profile black --check-only --diff services/ ml/ tests/
+            mkdir -p test-results
+            python -m pytest tests/unit/ -v --tb=short --junitxml=test-results/unit-results.xml
+          '
+        '''
+      }
+    }
+  }
+}
+</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

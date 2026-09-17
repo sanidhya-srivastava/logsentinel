@@ -1,0 +1,76 @@
+# =============================================================================
+# LogSentinel — Prometheus Configuration
+# Scrapes all FastAPI services, Kafka exporter, and node exporter
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: logsentinel
+    environment: local
+
+# Alertmanager integration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load alerting rules
+rule_files:
+  - "alerts/*.yml"
+
+# =============================================================================
+# Scrape configurations
+# =============================================================================
+scrape_configs:
+
+  # ─── Prometheus self-monitoring ───────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ─── Log Ingestion API ────────────────────────────────────────────────────
+  - job_name: log-ingestion-api
+    static_configs:
+      - targets: ["log-ingestion-api:8000"]
+    metrics_path: /metrics
+
+  # ─── ML Engine ────────────────────────────────────────────────────────────
+  - job_name: ml-engine
+    static_configs:
+      - targets: ["ml-engine:8001"]
+    metrics_path: /metrics
+
+  # ─── Dashboard Backend ────────────────────────────────────────────────────
+  - job_name: dashboard-backend
+    static_configs:
+      - targets: ["dashboard-backend:8002"]
+    metrics_path: /metrics
+
+  # ─── Kafka Exporter ───────────────────────────────────────────────────────
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  # ─── Node Exporter ────────────────────────────────────────────────────────
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # ─── Elasticsearch Exporter ───────────────────────────────────────────────
+  - job_name: elasticsearch-exporter
+    static_configs:
+      - targets: ["elasticsearch-exporter:9114"]
+
+  # ─── Redis Exporter ───────────────────────────────────────────────────────
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # ─── PostgreSQL Exporter ──────────────────────────────────────────────────
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

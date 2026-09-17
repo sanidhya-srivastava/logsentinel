@@ -1,0 +1,10 @@
+# =============================================================================
+# LogSentinel — Kubernetes Namespace
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logsentinel
+  labels:
+    app.kubernetes.io/name: logsentinel
+    app.kubernetes.io/managed-by: kubectl

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
+
+# ML models (large binary files — download separately)
+ml/models/*.joblib
+ml/models/training_metadata.json
+ml/models/evaluation_report.json
+
+# Environment secrets
+.env
+*.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+infra/terraform/.terraform/
+
+# Docker
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.venv-ci/
+jenkins-cli.jar
+jenkins_job_config.xml
+infra/jenkins/home/
+jenkins.log
+*.log
+test-results/
+.pytest_cache/
+htmlcov/
+coverage.xml

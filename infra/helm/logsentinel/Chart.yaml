@@ -1,0 +1,37 @@
+# =============================================================================
+# LogSentinel — Helm Chart Metadata
+# =============================================================================
+apiVersion: v2
+name: logsentinel
+description: Cloud-Native AI Log Monitoring & Anomaly Detection Platform
+type: application
+version: "1.0.0"
+appVersion: "1.0.0"
+keywords:
+  - logging
+  - anomaly-detection
+  - machine-learning
+  - monitoring
+home: https://github.com/your-org/logsentinel
+sources:
+  - https://github.com/your-org/logsentinel
+maintainers:
+  - name: LogSentinel Team
+    email: team@logsentinel.io
+dependencies:
+  - name: kafka
+    version: "26.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: kafka.enabled
+  - name: elasticsearch
+    version: "8.x.x"
+    repository: "https://helm.elastic.co"
+    condition: elasticsearch.enabled
+  - name: postgresql
+    version: "14.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "19.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LogSentinel | AI Log Monitoring Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="landing">
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span>LogSentinel</span>
+        </a>
+        <nav class="topnav">
+          <a href="#features">Features</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#security">Security</a>
+          <a href="/dashboard">Dashboard</a>
+        </nav>
+        <div class="topbar-actions">
+          <a class="ghost-button" href="/docs">API Docs</a>
+          <a class="primary-button" href="/dashboard">Open Console</a>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <span class="eyebrow">Cloud-native AI observability</span>
+            <h1>Detect the log patterns that break systems before users feel them.</h1>
+            <p>
+              LogSentinel ingests logs in real time, streams them through Kafka,
+              scores anomalies with Isolation Forest, and surfaces live service
+              health in a single operations dashboard.
+            </p>
+            <div class="hero-actions">
+              <a class="primary-button" href="/dashboard">Launch Dashboard</a>
+              <a class="ghost-button" href="#features">Explore Platform</a>
+            </div>
+            <div class="hero-strip">
+              <div>
+                <strong>10k/s</strong>
+                <span>Target ingest throughput</span>
+              </div>
+              <div>
+                <strong>&lt; 30s</strong>
+                <span>Anomaly alert latency goal</span>
+              </div>
+              <div>
+                <strong>5%</strong>
+                <span>Isolation Forest contamination</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-panel glass-card">
+            <div class="panel-header">
+              <span>Live platform pulse</span>
+              <span class="status-dot">Operational</span>
+            </div>
+            <div class="stat-grid compact">
+              <article class="metric-card">
+                <span class="metric-label">Logs / second</span>
+                <strong id="landing-log-rate">0.00</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Anomaly rate</span>
+                <strong id="landing-anomaly-rate">0%</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Logs last hour</span>
+                <strong id="landing-log-hour">0</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Total anomalies</span>
+                <strong id="landing-total-anomalies">0</strong>
+              </article>
+            </div>
+            <div class="mini-stream" id="landing-stream"></div>
+          </div>
+        </section>
+
+        <section class="section" id="features">
+          <div class="section-heading">
+            <span class="eyebrow">Why this frontend fits the project</span>
+            <h2>Designed around LogSentinel’s actual pipeline, not a generic admin template.</h2>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card">
+              <h3>Ingestion and throughput</h3>
+              <p>
+                Surface log volume, ingest velocity, and recent flow health so the
+                team can see the input side of the system immediately.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Live logs and anomalies</h3>
+              <p>
+                Show the recent logs and anomaly feed in the same console for
+                faster triage without context switching.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>ML model visibility</h3>
+              <p>
+                Highlight Isolation Forest behavior, anomaly rate, and suspicious
+                services so the ML layer is visible to operators.
+              </p>
+            </article>
+            <article class="feature-card">
+              <h3>Operational characteristics</h3>
+              <p>
+                Expose service mix, severity mix, pipeline stages, and architecture
+                characteristics required by your PRD.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section workflow-band" id="workflow">
+          <div class="section-heading">
+            <span class="eyebrow">Pipeline flow</span>
+            <h2>From raw log to actionable alert.</h2>
+          </div>
+          <div class="workflow-grid">
+            <article class="workflow-step">
+              <span>01</span>
+              <h3>Log ingestion API</h3>
+              <p>Structured logs enter through FastAPI and are enriched with IDs and timestamps.</p>
+            </article>
+            <article class="workflow-step">
+              <span>02</span>
+              <h3>Kafka streaming backbone</h3>
+              <p>Raw and processed topics keep ingestion, processing, and scoring decoupled at scale.</p>
+            </article>
+            <article class="workflow-step">
+              <span>03</span>
+              <h3>ML anomaly scoring</h3>
+              <p>Isolation Forest evaluates processed events and isolates unusual patterns in real time.</p>
+            </article>
+            <article class="workflow-step">
+              <span>04</span>
+              <h3>Dashboard and alerts</h3>
+              <p>Operators review trends, investigate logs, and route alerts to downstream responders.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section split-section" id="security">
+          <div class="section-heading">
+            <span class="eyebrow">Security and reliability</span>
+            <h2>Built for production-grade monitoring workloads.</h2>
+          </div>
+          <div class="split-grid">
+            <article class="glass-card detail-card">
+              <h3>Security posture</h3>
+              <ul class="detail-list">
+                <li>Kubernetes secrets and AWS-oriented secret management flow</li>
+                <li>Internal service boundaries with ingress and TLS-ready deployment design</li>
+                <li>Non-root container posture and observability-first runtime checks</li>
+              </ul>
+            </article>
+            <article class="glass-card detail-card">
+              <h3>Scale profile</h3>
+              <ul class="detail-list">
+                <li>10,000 logs per second target throughput</li>
+                <li>Horizontal scaling pattern for all core services</li>
+                <li>Short-lived cached stats to protect Elasticsearch and PostgreSQL</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

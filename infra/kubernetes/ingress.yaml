@@ -1,0 +1,106 @@
+# =============================================================================
+# LogSentinel — NGINX Ingress Controller
+# Requires: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/aws/deploy.yaml
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: logsentinel-ingress
+  namespace: logsentinel
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # Rate limiting to protect ingestion endpoint
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    # CORS (for browser-based dashboard)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    # AWS ACM certificate ARN (replace with your cert ARN)
+    # service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:123456789:certificate/xxx"
+spec:
+  tls:
+    - hosts:
+        - logsentinel.yourdomain.com
+      secretName: logsentinel-tls
+  rules:
+    - host: logsentinel.yourdomain.com
+      http:
+        paths:
+          # Log ingestion API
+          - path: /ingest
+            pathType: Prefix
+            backend:
+              service:
+                name: log-ingestion-api
+                port:
+                  number: 80
+          # Dashboard backend
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard-backend
+                port:
+                  number: 80
+          # ML Engine
+          - path: /ml
+            pathType: Prefix
+            backend:
+              service:
+                name: ml-engine
+                port:
+                  number: 80
+
+---
+# =============================================================================
+# PersistentVolumeClaims
+# =============================================================================
+
+# Elasticsearch data volume
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-pvc
+  namespace: logsentinel
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi
+
+# PostgreSQL data volume
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: logsentinel
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 20Gi
+
+# ML Models volume (ReadOnlyMany allows multiple pods to mount)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: logsentinel
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 5Gi

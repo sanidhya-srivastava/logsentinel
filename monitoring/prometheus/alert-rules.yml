@@ -1,0 +1,82 @@
+# Symlink target — alert-rules.yml points to the full alerts file
+# docker-compose.yml mounts this as /etc/prometheus/alert-rules.yml
+# The canonical file is monitoring/prometheus/alerts/logsentinel.yml
+
+# Copy of the alert rules (kept here so docker-compose volume mount works)
+groups:
+  - name: logsentinel.services
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been unreachable for more than 1 minute."
+
+      - alert: HighAnomalyRate
+        expr: rate(ml_engine_anomalies_detected_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High anomaly rate detected"
+          description: "Anomaly rate is {{ $value | humanize }}/s (threshold 0.5/s)"
+
+      - alert: HighIngestionErrorRate
+        expr: |
+          rate(ingestion_api_requests_total{status_code=~"5.."}[5m])
+          / rate(ingestion_api_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on log-ingestion-api"
+          description: "Error rate {{ $value | humanizePercentage }} (threshold 5%)"
+
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_group_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Group {{ $labels.group }} lag={{ $value }} on {{ $labels.topic }}"
+
+      - alert: SlowAPIResponse
+        expr: |
+          histogram_quantile(0.95,
+            rate(ingestion_api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 API latency"
+          description: "p95 response time is {{ $value | humanizeDuration }}"
+
+  - name: logsentinel.infrastructure
+    interval: 60s
+    rules:
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance)
+            (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU on {{ $labels.instance }}"
+          description: "CPU usage {{ $value | humanize }}%"
+
+      - alert: LowDiskSpace
+        expr: |
+          (node_filesystem_avail_bytes{fstype!="tmpfs"}
+          / node_filesystem_size_bytes{fstype!="tmpfs"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Available disk {{ $value | humanize }}%"

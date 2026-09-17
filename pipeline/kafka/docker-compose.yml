@@ -1,0 +1,123 @@
+# =============================================================================
+# LogSentinel — Kafka + Zookeeper Pipeline
+# Standalone compose for the data streaming middleware only.
+# Use this to spin up Kafka independently from the full stack.
+# =============================================================================
+version: "3.8"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: logsentinel-zookeeper
+    hostname: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: logsentinel-kafka
+    hostname: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      # External listener for host access, internal for container-to-container
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168        # 7 days
+      KAFKA_LOG_RETENTION_BYTES: 1073741824  # 1 GB per partition
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Kafka topic initializer — ensures topics exist before services start
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: logsentinel-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: |
+      bash -c "
+        echo 'Creating LogSentinel Kafka topics...'
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
+          --topic raw-logs --partitions 3 --replication-factor 1 \
+          --config retention.ms=86400000
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
+          --topic processed-logs --partitions 3 --replication-factor 1 \
+          --config retention.ms=86400000
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists \
+          --topic anomaly-alerts --partitions 1 --replication-factor 1 \
+          --config retention.ms=604800000
+        echo 'Topics created:'
+        kafka-topics --bootstrap-server kafka:9092 --list
+      "
+    restart: on-failure
+
+  # Kafka UI for local development
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: logsentinel-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: logsentinel
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    restart: unless-stopped
+
+  # Kafka Exporter for Prometheus metrics
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: logsentinel-kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--web.listen-address=:9308"
+    restart: unless-stopped
+
+volumes:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+
+networks:
+  default:
+    name: logsentinel-network
+    external: true

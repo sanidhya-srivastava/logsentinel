@@ -1,0 +1,96 @@
+# =============================================================================
+# LogSentinel — ConfigMaps for all services
+# =============================================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-ingestion-api-config
+  namespace: logsentinel
+data:
+  SERVICE_NAME: "log-ingestion-api"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  INGESTION_API_HOST: "0.0.0.0"
+  INGESTION_API_PORT: "8000"
+  INGESTION_API_WORKERS: "2"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_TOPIC_RAW_LOGS: "raw-logs"
+  KAFKA_PRODUCER_MAX_RETRIES: "3"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-processor-config
+  namespace: logsentinel
+data:
+  SERVICE_NAME: "log-processor"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_TOPIC_RAW_LOGS: "raw-logs"
+  KAFKA_TOPIC_PROCESSED_LOGS: "processed-logs"
+  KAFKA_GROUP_ID: "log-processor-group"
+  ELASTICSEARCH_HOST: "elasticsearch"
+  ELASTICSEARCH_PORT: "9200"
+  ELASTICSEARCH_INDEX_PREFIX: "logsentinel-logs"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-engine-config
+  namespace: logsentinel
+data:
+  SERVICE_NAME: "ml-engine"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  ML_ENGINE_HOST: "0.0.0.0"
+  ML_ENGINE_PORT: "8001"
+  ML_ENGINE_WORKERS: "2"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_TOPIC_PROCESSED_LOGS: "processed-logs"
+  KAFKA_TOPIC_ANOMALY_ALERTS: "anomaly-alerts"
+  KAFKA_GROUP_ID: "ml-engine-group"
+  MODEL_PATH: "/app/models/isolation_forest.joblib"
+  ANOMALY_SCORE_THRESHOLD: "-0.1"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alert-service-config
+  namespace: logsentinel
+data:
+  SERVICE_NAME: "alert-service"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_TOPIC_ANOMALY_ALERTS: "anomaly-alerts"
+  KAFKA_GROUP_ID: "alert-service-group"
+  REDIS_URL: "redis://redis:6379/0"
+  DATABASE_URL: "postgresql+asyncpg://logsentinel:logsentinel_prod@postgres:5432/logsentinel"
+  ALERT_DEDUP_WINDOW_SECONDS: "300"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-backend-config
+  namespace: logsentinel
+data:
+  SERVICE_NAME: "dashboard-backend"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  DASHBOARD_API_HOST: "0.0.0.0"
+  DASHBOARD_API_PORT: "8002"
+  DASHBOARD_API_WORKERS: "2"
+  ELASTICSEARCH_HOST: "elasticsearch"
+  ELASTICSEARCH_PORT: "9200"
+  DATABASE_URL: "postgresql+asyncpg://logsentinel:logsentinel_prod@postgres:5432/logsentinel"
+  REDIS_URL: "redis://redis:6379/0"
+  DASHBOARD_STATS_CACHE_TTL: "10"

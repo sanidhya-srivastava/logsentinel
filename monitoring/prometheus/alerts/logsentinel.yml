@@ -1,0 +1,93 @@
+# =============================================================================
+# LogSentinel — Prometheus Alerting Rules
+# =============================================================================
+groups:
+  - name: logsentinel.services
+    interval: 30s
+    rules:
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute."
+
+      # High anomaly rate
+      - alert: HighAnomalyRate
+        expr: rate(ml_engine_anomalies_detected_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High anomaly rate detected"
+          description: "Anomaly rate is {{ $value | humanize }} per second (threshold: 0.5/s)"
+
+      # High error rate on ingestion API
+      - alert: HighIngestionErrorRate
+        expr: |
+          rate(ingestion_api_requests_total{status_code=~"5.."}[5m])
+          / rate(ingestion_api_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on log-ingestion-api"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Kafka consumer lag
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_group_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer group {{ $labels.group }} has lag {{ $value }} on topic {{ $labels.topic }}"
+
+      # Slow API responses
+      - alert: SlowAPIResponse
+        expr: |
+          histogram_quantile(0.95, rate(ingestion_api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow API response times"
+          description: "95th percentile response time is {{ $value | humanizeDuration }}"
+
+  - name: logsentinel.infrastructure
+    interval: 60s
+    rules:
+      # High CPU
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanize }}%"
+
+      # Low disk space
+      - alert: LowDiskSpace
+        expr: |
+          (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Available disk space is {{ $value | humanize }}%"
+
+      # Elasticsearch cluster health
+      - alert: ElasticsearchClusterUnhealthy
+        expr: elasticsearch_cluster_health_status{color="red"} == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch cluster is RED"
+          description: "Elasticsearch cluster health is RED — data may be unavailable"

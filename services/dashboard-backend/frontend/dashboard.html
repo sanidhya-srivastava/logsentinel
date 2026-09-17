@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LogSentinel | Monitoring Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body data-page="dashboard">
+    <div class="dashboard-shell">
+      <aside class="sidebar glass-card">
+        <a class="brand" href="/">
+          <span class="brand-mark"></span>
+          <span>LogSentinel</span>
+        </a>
+        <nav class="sidebar-nav">
+          <a href="#overview">Overview</a>
+          <a href="#logs">Live Logs</a>
+          <a href="#anomalies">Anomalies</a>
+          <a href="#pipeline">Pipeline</a>
+        </nav>
+        <div class="sidebar-panel">
+          <span class="panel-kicker">Model</span>
+          <strong>Isolation Forest</strong>
+          <p>Streaming anomaly detection for processed log events.</p>
+        </div>
+      </aside>
+
+      <main class="dashboard-main">
+        <header class="dashboard-header">
+          <div>
+            <span class="eyebrow">Operations console</span>
+            <h1>Log monitoring, anomaly tracking, and service health.</h1>
+          </div>
+          <div class="dashboard-header-actions">
+            <a class="ghost-button" href="/docs">Backend API</a>
+            <a class="primary-button" href="/">Landing Page</a>
+          </div>
+        </header>
+
+        <section class="stat-grid" id="overview">
+          <article class="metric-card accent-red">
+            <span class="metric-label">Logs / second</span>
+            <strong id="stat-log-rate">0.00</strong>
+            <small>Current ingest pace from `/stats`</small>
+          </article>
+          <article class="metric-card accent-amber">
+            <span class="metric-label">Logs last hour</span>
+            <strong id="stat-logs-hour">0</strong>
+            <small>Total logs observed in the active window</small>
+          </article>
+          <article class="metric-card accent-green">
+            <span class="metric-label">Anomaly rate</span>
+            <strong id="stat-anomaly-rate">0%</strong>
+            <small>Share of anomalies over the recent hour</small>
+          </article>
+          <article class="metric-card accent-rose">
+            <span class="metric-label">Total anomalies</span>
+            <strong id="stat-total-anomalies">0</strong>
+            <small>Persisted anomaly alerts from PostgreSQL</small>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="glass-card span-2">
+            <div class="card-heading">
+              <h2>Traffic and severity characteristics</h2>
+              <span class="muted">Derived from recent logs</span>
+            </div>
+            <div class="chart-grid">
+              <div>
+                <h3>Service distribution</h3>
+                <div id="service-bars" class="bar-stack"></div>
+              </div>
+              <div>
+                <h3>Level distribution</h3>
+                <div id="level-pills" class="pill-cloud"></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="glass-card">
+            <div class="card-heading">
+              <h2>Platform characteristics</h2>
+            </div>
+            <ul class="detail-list">
+              <li>FastAPI ingestion and dashboard APIs</li>
+              <li>Kafka topics for raw, processed, and anomaly streams</li>
+              <li>Elasticsearch-backed search with PostgreSQL anomaly history</li>
+              <li>Prometheus and Grafana observability layer</li>
+            </ul>
+          </article>
+
+          <article class="glass-card span-2" id="logs">
+            <div class="card-heading">
+              <h2>Recent logs</h2>
+              <span class="muted">Latest entries from `/logs`</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Service</th>
+                    <th>Level</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody id="logs-table"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="glass-card" id="anomalies">
+            <div class="card-heading">
+              <h2>Anomaly feed</h2>
+              <span class="muted">PostgreSQL-backed alerts</span>
+            </div>
+            <div id="anomaly-list" class="feed-list"></div>
+          </article>
+
+          <article class="glass-card span-3" id="pipeline">
+            <div class="card-heading">
+              <h2>Pipeline status map</h2>
+              <span class="muted">Frontend view aligned to the project architecture</span>
+            </div>
+            <div class="pipeline-grid" id="pipeline-grid"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

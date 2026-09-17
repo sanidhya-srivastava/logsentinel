@@ -1,0 +1,99 @@
+# =============================================================================
+# LogSentinel — Kubernetes Services
+# All service definitions in one file for easy management
+# =============================================================================
+
+---
+# Log Ingestion API — LoadBalancer (external entry point)
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-ingestion-api
+  namespace: logsentinel
+  labels:
+    app: log-ingestion-api
+spec:
+  type: ClusterIP
+  selector:
+    app: log-ingestion-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+
+---
+# ML Engine — ClusterIP (internal, called by processor)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-engine
+  namespace: logsentinel
+  labels:
+    app: ml-engine
+spec:
+  type: ClusterIP
+  selector:
+    app: ml-engine
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8001
+      protocol: TCP
+
+---
+# Alert Service — ClusterIP (internal consumer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service
+  namespace: logsentinel
+  labels:
+    app: alert-service
+spec:
+  type: ClusterIP
+  selector:
+    app: alert-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8003
+      protocol: TCP
+
+---
+# Dashboard Backend — ClusterIP (accessed via Ingress)
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-backend
+  namespace: logsentinel
+  labels:
+    app: dashboard-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: dashboard-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8002
+      protocol: TCP
+
+---
+# Log Processor — Headless (Kafka consumer, no HTTP service needed)
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-processor
+  namespace: logsentinel
+  labels:
+    app: log-processor
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: log-processor
+  ports:
+    - name: metrics
+      port: 9000
+      targetPort: 9000
