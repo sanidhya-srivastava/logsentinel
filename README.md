@@ -10,8 +10,7 @@
 
 ---
 
-> **Live Demo →** [logsentinel-log.vercel.app](https://logsentinel-log.vercel.app) &nbsp;|&nbsp; **GitHub** → [Arnazz10/logsentinel](https://github.com/Arnazz10/logsentinel)
-
+> **Live Demo →** [logsentinel-log.vercel.app](https://logsentinel-log.vercel.app) &nbsp;
 ---
 
 ## Overview
