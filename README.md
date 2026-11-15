@@ -8,10 +8,8 @@
 ![Docker](https://img.shields.io/badge/Docker-24+-blue?logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
----
 
-> **Live Demo →** [logsentinel-log.vercel.app](https://logsentinel-log.vercel.app)
----
+
 
 ## Overview
 
