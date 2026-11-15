@@ -67,6 +67,23 @@ SERVICE_MAP = {
 }
 
 
+def _encode_error_code(code: int | None) -> int:
+    """Bucket encode HTTP status or application codes to 0-5."""
+    if code is None or code == 0:
+        return 0
+    if 200 <= code < 300:
+        return 1
+    if 300 <= code < 400:
+        return 2
+    if 400 <= code < 500:
+        return 3
+    if 500 <= code < 600:
+        return 4
+    if code in (1, 2, 3, 4, 5):
+        return code
+    return 5
+
+
 def generate_evaluation_dataset(
     n_normal: int = 1500, n_anomalous: int = 150, seed: int = 99
 ) -> pd.DataFrame:
@@ -77,9 +94,9 @@ def generate_evaluation_dataset(
     normal = {
         "hour_of_day": rng.integers(0, 24, n_normal),
         "response_time_ms": rng.normal(180, 40, n_normal).clip(10, 500),
-        "error_code": rng.choice(
+        "error_code": [_encode_error_code(c) for c in rng.choice(
             [0, 200, 201, 302], n_normal, p=[0.6, 0.25, 0.08, 0.07]
-        ),
+        )],
         "log_level_encoded": rng.choice([0, 1, 2], n_normal, p=[0.1, 0.8, 0.1]),
         "request_count_last_60s": rng.integers(5, 80, n_normal),
         "service_id_encoded": rng.integers(0, 5, n_normal),
@@ -89,10 +106,8 @@ def generate_evaluation_dataset(
     # Anomalous logs
     anomalous = {
         "hour_of_day": rng.integers(0, 24, n_anomalous),
-        "response_time_ms": rng.choice(
-            [rng.normal(2500, 300, n_anomalous), rng.normal(5, 2, n_anomalous)],
-        ).flatten()[:n_anomalous],
-        "error_code": rng.choice([500, 503, 504, 429], n_anomalous),
+        "response_time_ms": rng.uniform(1800, 8000, n_anomalous),
+        "error_code": [_encode_error_code(c) for c in rng.choice([500, 503, 504, 429], n_anomalous)],
         "log_level_encoded": rng.choice([3, 4], n_anomalous, p=[0.6, 0.4]),
         "request_count_last_60s": rng.integers(150, 500, n_anomalous),
         "service_id_encoded": rng.integers(0, 5, n_anomalous),
@@ -101,7 +116,6 @@ def generate_evaluation_dataset(
 
     df_normal = pd.DataFrame(normal)
     df_anomalous = pd.DataFrame(anomalous)
-    df_anomalous["response_time_ms"] = rng.uniform(1800, 8000, n_anomalous)
 
     df = pd.concat([df_normal, df_anomalous], ignore_index=True)
     df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
@@ -173,9 +187,16 @@ def evaluate(
     )
 
     # ── Predict ───────────────────────────────────────────────────────────────
+    scaler_file = Path(model_path).parent / "scaler.joblib"
+    scaler = None
+    if scaler_file.exists():
+        scaler = joblib.load(scaler_file)
+        logger.info("Scaler loaded", extra={"path": str(scaler_file)})
+
     logger.info("Running model inference...")
-    y_pred = model.predict(X)  # -1 = anomaly, 1 = normal
-    y_scores = model.decision_function(X)  # lower = more anomalous
+    X_input = scaler.transform(X) if scaler is not None else X
+    y_pred = model.predict(X_input)  # -1 = anomaly, 1 = normal
+    y_scores = model.decision_function(X_input)  # lower = more anomalous
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     # Convert to binary: 1 = anomaly for sklearn metrics

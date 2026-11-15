@@ -199,18 +199,6 @@ class ElasticsearchClient:
                 "Run: pip install 'elasticsearch[async]'"
             ) from exc
 
-        # Build the hosts list
-        host_entry: dict[str, Any] = {
-            "host": self._host,
-            "port": self._port,
-            "scheme": self._scheme,
-        }
-
-        # Build auth tuple if credentials provided
-        http_auth = None
-        if self._username and self._password:
-            http_auth = (self._username, self._password)
-
         logger.info(
             "Connecting to Elasticsearch",
             extra={
@@ -220,17 +208,16 @@ class ElasticsearchClient:
             },
         )
 
-        self._client = AsyncElasticsearch(
-            hosts=[host_entry],
-            http_auth=http_auth,
-            request_timeout=self._timeout,
-            max_retries=self._max_retries,
-            retry_on_timeout=self._retry_on_timeout,
-            # Sniffing is disabled in containerised environments
-            # because pod IPs are ephemeral
-            sniff_on_start=False,
-            sniff_on_node_failure=False,
-        )
+        es_kwargs: dict[str, Any] = {
+            "hosts": [f"{self._scheme}://{self._host}:{self._port}"],
+            "request_timeout": self._timeout,
+            "max_retries": self._max_retries,
+            "retry_on_timeout": self._retry_on_timeout,
+        }
+        if self._username and self._password:
+            es_kwargs["basic_auth"] = (self._username, self._password)
+
+        self._client = AsyncElasticsearch(**es_kwargs)
 
         # Verify connectivity with a cluster health check
         try:

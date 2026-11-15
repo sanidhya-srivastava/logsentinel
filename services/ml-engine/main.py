@@ -34,6 +34,7 @@ from app.metrics import (
     MODEL_LOADED,
     REQUEST_COUNT,
     REQUEST_LATENCY,
+    make_asgi_app,
 )
 from app.model_manager import ModelManager
 from app.schemas import (
@@ -46,7 +47,6 @@ from app.schemas import (
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
 
 logger = get_logger(__name__)
 

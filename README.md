@@ -10,7 +10,7 @@
 
 ---
 
-> **Live Demo →** [logsentinel-log.vercel.app](https://logsentinel-log.vercel.app) &nbsp;
+> **Live Demo →** [logsentinel-log.vercel.app](https://logsentinel-log.vercel.app)
 ---
 
 ## Overview

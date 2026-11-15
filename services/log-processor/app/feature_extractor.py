@@ -203,8 +203,15 @@ class FeatureExtractor:
         # 4. log_level_encoded
         log_level_encoded = LOG_LEVEL_ENCODING.get(level_raw, 1)  # default INFO=1
 
-        # 5. request_count_last_60s (rolling window via Redis)
-        request_count_last_60s = await self._increment_and_count(service)
+        # 5. request_count_last_60s (rolling window via Redis or input fallback)
+        if self._redis is not None:
+            request_count_last_60s = await self._increment_and_count(service)
+        else:
+            raw_req = log_entry.get("request_count_last_60s")
+            try:
+                request_count_last_60s = int(raw_req) if raw_req is not None else 0
+            except (TypeError, ValueError):
+                request_count_last_60s = 0
 
         # 6. service_id_encoded
         service_id_encoded = await self._get_or_create_service_id(service)

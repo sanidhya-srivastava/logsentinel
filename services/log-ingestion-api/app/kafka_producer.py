@@ -100,14 +100,14 @@ class KafkaProducerClient:
         bootstrap_servers: str,
         topic: str,
         *,
-        acks: str = "all",
+        acks: int | str = 1,
         compression_type: str = "gzip",
         max_batch_size: int = 16_384,
         linger_ms: int = 5,
         request_timeout_ms: int = 30_000,
         retry_backoff_ms: int = 300,
         max_retries: int = 5,
-        enable_idempotence: bool = True,
+        enable_idempotence: bool = False,
     ) -> None:
         """
         Initialise the producer client.

@@ -1,19 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Search, Settings, Square, Terminal } from 'lucide-react';
+import { fetchDashboardSnapshot, ingestLog } from '../api/client';
 
 const clusters = [
-  ['prod-cluster-01', 'us-east-1'],
+  ['local-compose', 'localhost:8002'],
   ['staging-cluster', 'us-west-2'],
-  ['dev-sandbox', 'ap-south-1'],
-];
-
-const lines = [
-  { time: '19:35:01', level: 'INFO', service: 'auth', msg: 'User authenticated with session token', anomaly: false },
-  { time: '19:35:04', level: 'DEBUG', service: 'ingest', msg: 'Buffer flush complete for 1,250 records', anomaly: false },
-  { time: '19:35:08', level: 'ERROR', service: 'db', msg: 'Query execution timeout after 5000ms', anomaly: true },
-  { time: '19:35:10', level: 'INFO', service: 'gateway', msg: 'GET /api/v1/health returned 200 OK', anomaly: false },
-  { time: '19:35:12', level: 'INFO', service: 'ml', msg: 'Inference latency 12ms with score -0.021', anomaly: false },
-  { time: '19:35:15', level: 'WARN', service: 'billing', msg: 'Retry storm detected against upstream provider', anomaly: true },
+  ['prod-cluster-01', 'us-east-1'],
 ];
 
 const tabs = ['Raw Stream', 'Anomalies', 'Live Metrics'];
@@ -24,23 +16,101 @@ const OpenConsole = () => {
   const [running, setRunning] = useState(true);
   const [query, setQuery] = useState('');
   const [command, setCommand] = useState('');
-  const [history, setHistory] = useState(['logsentinel status --cluster prod-cluster-01']);
+  const [snapshot, setSnapshot] = useState(null);
+  const [history, setHistory] = useState([
+    'connected to dashboard-backend (:8002) — type "help" for commands',
+  ]);
+
+  const inFlightRef = useRef(false);
+
+  const loadSnapshot = useCallback(async (forceFresh = false) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    try {
+      const data = await fetchDashboardSnapshot({ forceFresh, logLimit: 100, anomalyLimit: 50 });
+      setSnapshot(data);
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSnapshot(false);
+    if (!running) return undefined;
+    const timer = setInterval(() => loadSnapshot(false), 3000);
+    return () => clearInterval(timer);
+  }, [running, loadSnapshot]);
 
   const visibleLines = useMemo(() => {
     const normalized = query.toLowerCase().trim();
-    return lines.filter((line) => {
-      const matchesTab = activeTab !== 'Anomalies' || line.anomaly;
-      const matchesQuery = !normalized || `${line.level} ${line.service} ${line.msg}`.toLowerCase().includes(normalized);
-      return matchesTab && matchesQuery;
-    });
-  }, [activeTab, query]);
+    const source =
+      activeTab === 'Anomalies'
+        ? (snapshot?.anomalies || []).map((a) => ({
+            id: a.id,
+            time: a.detectedAt ? new Date(a.detectedAt).toLocaleTimeString('en-US', { hour12: false }) : '--:--:--',
+            level: a.level.toUpperCase(),
+            service: a.service,
+            msg: `${a.message} (score: ${Number(a.score).toFixed(3)})`,
+            anomaly: true,
+          }))
+        : snapshot?.logs || [];
 
-  const runCommand = (event) => {
-    event.preventDefault();
-    if (!command.trim()) return;
-    setHistory((current) => [`${command.trim()}`, ...current].slice(0, 5));
-    setCommand('');
+    return source.filter((line) => {
+      if (!normalized) return true;
+      return `${line.level} ${line.service} ${line.msg}`.toLowerCase().includes(normalized);
+    });
+  }, [activeTab, query, snapshot]);
+
+  const appendHistory = (entry) => {
+    setHistory((current) => [entry, ...current].slice(0, 8));
   };
+
+  const runCommand = async (event) => {
+    event.preventDefault();
+    const raw = command.trim();
+    if (!raw) return;
+    setCommand('');
+    appendHistory(raw);
+
+    const [cmd, ...args] = raw.split(/\s+/);
+    const lower = cmd.toLowerCase();
+
+    if (lower === 'help') {
+      appendHistory('commands: help | status | refresh | clear | filter <text> | ingest <service> <level> <message>');
+    } else if (lower === 'clear') {
+      setHistory([]);
+    } else if (lower === 'refresh') {
+      await loadSnapshot(true);
+      appendHistory('refreshed snapshot from backend (:8002)');
+    } else if (lower === 'filter') {
+      setQuery(args.join(' '));
+      appendHistory(`filter set to "${args.join(' ')}"`);
+    } else if (lower === 'status') {
+      const checks = snapshot?.health?.checks
+        ? Object.entries(snapshot.health.checks).map(([k, v]) => `${k}=${v}`).join(', ')
+        : 'backend offline';
+      appendHistory(`health: ${snapshot?.health?.status || 'offline'} (${checks})`);
+    } else if (lower === 'ingest') {
+      const [service = 'console-app', level = 'INFO', ...msgParts] = args;
+      const message = msgParts.join(' ') || 'Log submitted from OpenConsole';
+      try {
+        const res = await ingestLog({ service, level, message });
+        appendHistory(`accepted log_id=${res.log_id}`);
+        setTimeout(() => loadSnapshot(true), 1200);
+      } catch (err) {
+        appendHistory(`ingest failed: ${err.message}`);
+      }
+    } else {
+      appendHistory(`unknown command "${cmd}" — try "help"`);
+    }
+  };
+
+  const stats = snapshot?.stats;
+  const statusText = !snapshot?.reachable
+    ? 'Offline'
+    : running
+      ? `Connected · ${new Date(snapshot.lastUpdated).toLocaleTimeString()}`
+      : 'Paused';
 
   return (
     <section className="console-page">
@@ -50,7 +120,7 @@ const OpenConsole = () => {
             <h2>
               <Terminal size={20} /> Console
             </h2>
-            <button className="icon-button" type="button" aria-label="Console settings">
+            <button className="icon-button" type="button" aria-label="Refresh console" onClick={() => loadSnapshot(true)}>
               <Settings size={17} />
             </button>
           </div>
@@ -90,7 +160,7 @@ const OpenConsole = () => {
               ))}
             </div>
             <div className="row-actions">
-              <span className="status-pill">{running ? 'Connected' : 'Paused'}</span>
+              <span className="status-pill">{statusText}</span>
               <button className="pill-button" type="button" onClick={() => setRunning((value) => !value)}>
                 {running ? <Square size={16} /> : <Play size={16} />}
                 {running ? 'Pause stream' : 'Resume stream'}
@@ -100,23 +170,35 @@ const OpenConsole = () => {
 
           <div className="terminal-window">
             <div className="terminal-intro">
-              [SYS] LogSentinel Core v1.0.0 initialized<br />
-              [SYS] Active cluster: {activeCluster}<br />
-              [SYS] Kafka bootstrap servers connected at kafka:9092<br />
-              [SYS] Isolation Forest model loaded with contamination 0.05<br />
+              [SYS] LogSentinel Console · target cluster: {activeCluster}<br />
+              [SYS] Backend (:8002): {snapshot?.reachable ? snapshot?.health?.status || 'connected' : 'offline'}<br />
+              [SYS] ES: {snapshot?.health?.checks?.elasticsearch ?? 'unknown'} | DB: {snapshot?.health?.checks?.database ?? 'unknown'} | Cache: {snapshot?.health?.checks?.cache ?? 'unknown'}<br />
+              [SYS] ML Engine (:8001): {snapshot?.modelStatus ? `${snapshot.modelStatus.model_type} (${snapshot.modelStatus.n_estimators} trees)` : 'offline'}<br />
               [SYS] Current view: {activeTab}
             </div>
 
             {activeTab === 'Live Metrics' ? (
               <div className="metric-grid">
-                <div className="metric-card"><span className="metric-label">Consumer lag</span><span className="metric-value">1,204</span></div>
-                <div className="metric-card"><span className="metric-label">Inference p95</span><span className="metric-value">22ms</span></div>
-                <div className="metric-card"><span className="metric-label">Error rate</span><span className="metric-value">0.42%</span></div>
-                <div className="metric-card"><span className="metric-label">Alert queue</span><span className="metric-value">7</span></div>
+                <div className="metric-card"><span className="metric-label">Logs / min</span><span className="metric-value">{Number(stats?.logs_last_minute ?? 0).toLocaleString()}</span></div>
+                <div className="metric-card"><span className="metric-label">Logs (1h)</span><span className="metric-value">{Number(stats?.logs_last_hour ?? 0).toLocaleString()}</span></div>
+                <div className="metric-card"><span className="metric-label">Anomaly rate</span><span className="metric-value">{Number(stats?.anomaly_rate_percent ?? 0)}%</span></div>
+                <div className="metric-card"><span className="metric-label">Total alerts</span><span className="metric-value">{Number(stats?.total_anomalies ?? 0).toLocaleString()}</span></div>
+              </div>
+            ) : visibleLines.length === 0 ? (
+              <div className="terminal-line">
+                <span className="log-time">[--:--:--]</span>
+                <strong className="level-info">INFO</strong>
+                <span>system</span>
+                <span>
+                  {snapshot?.reachable
+                    ? 'No matching events yet. Run: ingest demo-app ERROR "Timeout on payment gateway"'
+                    : 'Waiting for dashboard-backend (:8002)...'}
+                </span>
+                <span />
               </div>
             ) : (
               visibleLines.map((line) => (
-                <div className="terminal-line" key={`${line.time}-${line.service}-${line.msg}`}>
+                <div className="terminal-line" key={`${line.id}-${line.time}`}>
                   <span className="log-time">[{line.time}]</span>
                   <strong className={`level-${line.level.toLowerCase()}`}>{line.level}</strong>
                   <span>{line.service}</span>
@@ -127,8 +209,8 @@ const OpenConsole = () => {
             )}
 
             <div className="terminal-intro" style={{ marginTop: 24 }}>
-              {history.map((item) => (
-                <div key={item}><span className="prompt">$</span> {item}</div>
+              {history.map((item, idx) => (
+                <div key={`${idx}-${item}`}><span className="prompt">$</span> {item}</div>
               ))}
             </div>
           </div>
@@ -139,7 +221,7 @@ const OpenConsole = () => {
               className="console-input"
               value={command}
               onChange={(event) => setCommand(event.target.value)}
-              placeholder="run query, tail service, or inspect anomaly"
+              placeholder='help, status, refresh, filter <text>, or ingest <svc> <LVL> <msg>'
             />
             <button className="pill-button primary" type="submit">Run</button>
           </form>

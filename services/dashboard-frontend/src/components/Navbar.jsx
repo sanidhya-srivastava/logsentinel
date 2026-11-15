@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, Github, Menu, Terminal, X } from 'lucide-react';
+import { Activity, BookOpen, Code2, Menu, Terminal, X } from 'lucide-react';
 
 const links = [
   { to: '/features', label: 'Features' },
@@ -45,7 +45,7 @@ const Navbar = () => {
                   rel="noopener noreferrer"
                   className="nav-link"
                 >
-                  <Github size={16} />
+                  <Code2 size={16} />
                   {link.label}
                 </a>
               ) : (

@@ -5,7 +5,25 @@ All prometheus_client counters, histograms, and gauges for the
 Dashboard Backend service.
 """
 
-from prometheus_client import Counter, Gauge, Histogram
+try:
+    from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
+except ImportError:
+    class _DummyMetric:
+        def __init__(self, *args, **kwargs): pass
+        def labels(self, *args, **kwargs): return self
+        def inc(self, *args, **kwargs): pass
+        def dec(self, *args, **kwargs): pass
+        def set(self, *args, **kwargs): pass
+        def observe(self, *args, **kwargs): pass
+
+    Counter = Gauge = Histogram = _DummyMetric  # type: ignore
+
+    def make_asgi_app():
+        from fastapi.responses import PlainTextResponse
+        async def _dummy(scope, receive, send):
+            res = PlainTextResponse("# metrics placeholder")
+            await res(scope, receive, send)
+        return _dummy
 
 # HTTP request metrics
 REQUEST_COUNT = Counter(

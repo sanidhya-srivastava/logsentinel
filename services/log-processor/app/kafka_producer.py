@@ -129,6 +129,8 @@ class KafkaProducerClient:
         """
         self._bootstrap_servers = bootstrap_servers
         self._topic = topic
+        if isinstance(acks, str) and acks.isdigit():
+            acks = int(acks)
         self._acks = acks
         self._compression_type = compression_type
         self._max_batch_size = max_batch_size

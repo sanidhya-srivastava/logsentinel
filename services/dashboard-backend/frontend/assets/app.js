@@ -1,61 +1,28 @@
-const fallbackStats = {
-  log_rate_per_second: 42.4,
-  logs_last_hour: 152640,
-  anomaly_rate_percent: 1.87,
-  total_anomalies: 286,
+const POLL_INTERVAL_MS = 4000;
+
+const emptyStats = {
+  log_rate_per_second: 0,
+  logs_last_hour: 0,
+  anomaly_rate_percent: 0,
+  total_anomalies: 0,
 };
 
-const fallbackLogs = [
-  {
-    "@timestamp": "2026-04-17T07:22:15Z",
-    service: "auth-service",
-    level: "ERROR",
-    message: "Database connection timeout after 5000ms",
-  },
-  {
-    "@timestamp": "2026-04-17T07:21:44Z",
-    service: "payment-service",
-    level: "WARN",
-    message: "Retry storm detected against upstream billing provider",
-  },
-  {
-    "@timestamp": "2026-04-17T07:21:09Z",
-    service: "gateway",
-    level: "INFO",
-    message: "Steady request flow observed across the last rolling window",
-  },
-  {
-    "@timestamp": "2026-04-17T07:20:31Z",
-    service: "ml-engine",
-    level: "INFO",
-    message: "Anomaly model scored processed batch successfully",
-  },
-];
-
-const fallbackAnomalies = [
-  {
-    service: "auth-service",
-    level: "ERROR",
-    score: -0.84,
-    message: "Repeated timeout burst from authentication workload",
-    detected_at: "2026-04-17T07:20:10Z",
-  },
-  {
-    service: "payment-service",
-    level: "WARN",
-    score: -0.62,
-    message: "Latency spike exceeded learned baseline",
-    detected_at: "2026-04-17T07:14:02Z",
-  },
-];
-
 const pipelineNodes = [
-  ["Ingest", "FastAPI validates and enriches raw logs."],
-  ["Kafka", "Raw and processed topics keep the stream decoupled."],
-  ["Processor", "Events are structured and indexed into Elasticsearch."],
-  ["ML", "Isolation Forest scores processed log feature vectors."],
-  ["Alerts", "Anomalies persist and route to responders."],
+  ["Ingest", "FastAPI validates and enriches raw logs on :8000."],
+  ["Kafka", "raw-logs, processed-logs, and anomaly-alerts decouple stages."],
+  ["Processor", "Feature extraction + Elasticsearch indexing into logs-*."],
+  ["ML Engine", "Isolation Forest scores vectors in real time on :8001."],
+  ["Alerts", "Deduplicates in Redis, stores in PostgreSQL, routes notifications."],
 ];
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function numberFormat(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
@@ -73,37 +40,74 @@ function safeSlice(items, size) {
   return Array.isArray(items) ? items.slice(0, size) : [];
 }
 
-async function getJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Request failed for ${url}`);
+async function getJson(url, allowErrorJson = false) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok && !allowErrorJson) {
+    throw new Error(`HTTP ${response.status} for ${url}`);
+  }
   return response.json();
 }
 
-async function loadDashboardData() {
-  try {
-    const [stats, logs, anomalies] = await Promise.all([
-      getJson("/stats"),
-      getJson("/logs?size=120"),
-      getJson("/anomalies?size=8"),
-    ]);
-    return {
-      stats,
-      logs: logs.items || [],
-      anomalies: anomalies.items || [],
-    };
-  } catch (error) {
-    return {
-      stats: fallbackStats,
-      logs: fallbackLogs,
-      anomalies: fallbackAnomalies,
-    };
-  }
+async function loadDashboardData(forceFresh = false) {
+  const statsUrl = forceFresh ? "/stats?nocache=true" : "/stats";
+  const [statsRes, logsRes, anomaliesRes, healthRes] = await Promise.allSettled([
+    getJson(statsUrl),
+    getJson("/logs?size=100"),
+    getJson("/anomalies?size=10"),
+    getJson("/health", true),
+  ]);
+
+  const reachable =
+    statsRes.status === "fulfilled" ||
+    logsRes.status === "fulfilled" ||
+    anomaliesRes.status === "fulfilled" ||
+    healthRes.status === "fulfilled";
+
+  return {
+    reachable,
+    health: healthRes.status === "fulfilled" ? healthRes.value : null,
+    stats: statsRes.status === "fulfilled" ? statsRes.value : emptyStats,
+    logs: logsRes.status === "fulfilled" ? logsRes.value.items || [] : [],
+    anomalies: anomaliesRes.status === "fulfilled" ? anomaliesRes.value.items || [] : [],
+  };
 }
 
-function renderLanding(stats, logs) {
+function updateStatusBadge(elementId, data) {
+  const badge = document.getElementById(elementId);
+  if (!badge) return;
+  const now = new Date().toLocaleTimeString();
+
+  if (!data.reachable) {
+    badge.textContent = "Backend Offline";
+    badge.style.background = "var(--red, #ef4444)";
+    badge.style.color = "#fff";
+    return;
+  }
+
+  const healthStatus = data.health?.status;
+  if (healthStatus === "degraded") {
+    const checks = data.health?.checks || {};
+    const down = Object.entries(checks)
+      .filter(([, state]) => state !== "connected")
+      .map(([name]) => name);
+    badge.textContent = down.length ? `Degraded (${down.join(", ")})` : `Live · ${now}`;
+    badge.style.background = "var(--amber, #f59e0b)";
+    badge.style.color = "#111";
+    return;
+  }
+
+  badge.textContent = `Live · ${now}`;
+  badge.style.background = "var(--green, #4ade80)";
+  badge.style.color = "#0e120e";
+}
+
+function renderLanding(data) {
+  const { stats, logs } = data;
+  updateStatusBadge("landing-status", data);
+
   const mappings = [
-    ["landing-log-rate", stats.log_rate_per_second?.toFixed?.(2) ?? "0.00"],
-    ["landing-anomaly-rate", `${stats.anomaly_rate_percent ?? 0}%`],
+    ["landing-log-rate", Number(stats.log_rate_per_second || 0).toFixed(2)],
+    ["landing-anomaly-rate", `${Number(stats.anomaly_rate_percent || 0)}%`],
     ["landing-log-hour", numberFormat(stats.logs_last_hour)],
     ["landing-total-anomalies", numberFormat(stats.total_anomalies)],
   ];
@@ -115,12 +119,18 @@ function renderLanding(stats, logs) {
 
   const stream = document.getElementById("landing-stream");
   if (!stream) return;
+
+  if (!logs.length) {
+    stream.innerHTML = `<div class="mini-log">Waiting for live logs in Elasticsearch...</div>`;
+    return;
+  }
+
   stream.innerHTML = safeSlice(logs, 3)
     .map(
       (log) => `
         <div class="mini-log">
-          <strong class="table-level ${levelClass(log.level)}">${log.level || "INFO"}</strong>
-          ${log.service || "service"}: ${log.message || "No message"}
+          <strong class="table-level ${levelClass(log.level)}">${escapeHtml(log.level || "INFO")}</strong>
+          ${escapeHtml(log.service || "service")}: ${escapeHtml(log.message || "No message")}
         </div>
       `
     )
@@ -140,12 +150,16 @@ function renderBars(items, targetId) {
   const container = document.getElementById(targetId);
   if (!container) return;
   const top = aggregateBy(items, "service").slice(0, 6);
+  if (!top.length) {
+    container.innerHTML = `<div class="muted">No service activity in this window yet.</div>`;
+    return;
+  }
   const max = top[0]?.[1] || 1;
   container.innerHTML = top
     .map(
       ([service, count]) => `
         <div class="bar-row">
-          <span>${service}</span>
+          <span>${escapeHtml(service)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
           <strong>${count}</strong>
         </div>
@@ -158,10 +172,14 @@ function renderPills(items) {
   const container = document.getElementById("level-pills");
   if (!container) return;
   const levels = aggregateBy(items, "level");
+  if (!levels.length) {
+    container.innerHTML = `<span class="pill"><strong>IDLE</strong> 0 events</span>`;
+    return;
+  }
   container.innerHTML = levels
     .map(
       ([level, count]) =>
-        `<span class="pill"><strong>${level}</strong> ${count} events</span>`
+        `<span class="pill"><strong>${escapeHtml(level)}</strong> ${count} events</span>`
     )
     .join("");
 }
@@ -169,14 +187,18 @@ function renderPills(items) {
 function renderLogs(logs) {
   const table = document.getElementById("logs-table");
   if (!table) return;
-  table.innerHTML = safeSlice(logs, 10)
+  if (!logs.length) {
+    table.innerHTML = `<tr><td colspan="4" class="muted">No logs indexed yet. Send events to POST http://localhost:8000/ingest.</td></tr>`;
+    return;
+  }
+  table.innerHTML = safeSlice(logs, 15)
     .map(
       (log) => `
         <tr>
-          <td>${new Date(log["@timestamp"] || log.timestamp || Date.now()).toLocaleString()}</td>
-          <td>${log.service || "unknown"}</td>
-          <td><span class="table-level ${levelClass(log.level)}">${log.level || "INFO"}</span></td>
-          <td>${log.message || "No message available"}</td>
+          <td>${escapeHtml(new Date(log["@timestamp"] || log.timestamp || Date.now()).toLocaleString())}</td>
+          <td>${escapeHtml(log.service || "unknown")}</td>
+          <td><span class="table-level ${levelClass(log.level)}">${escapeHtml(log.level || "INFO")}</span></td>
+          <td>${escapeHtml(log.message || "No message available")}</td>
         </tr>
       `
     )
@@ -186,16 +208,22 @@ function renderLogs(logs) {
 function renderAnomalies(anomalies) {
   const container = document.getElementById("anomaly-list");
   if (!container) return;
+  if (!anomalies.length) {
+    container.innerHTML = `<div class="muted">No anomaly alerts recorded yet.</div>`;
+    return;
+  }
   container.innerHTML = safeSlice(anomalies, 6)
-    .map(
-      (item) => `
+    .map((item) => {
+      const score = item.anomaly_score ?? item.score;
+      const formattedScore = typeof score === "number" ? score.toFixed(3) : score ?? "n/a";
+      return `
         <article class="feed-item">
-          <strong>${item.service || "unknown"} <span class="table-level ${levelClass(item.level)}">${item.level || "ALERT"}</span></strong>
-          <div>${item.message || "No anomaly message"}</div>
-          <small class="muted">Score: ${item.score ?? "n/a"} | ${new Date(item.detected_at || Date.now()).toLocaleString()}</small>
+          <strong>${escapeHtml(item.service || "unknown")} <span class="table-level ${levelClass(item.level)}">${escapeHtml(item.level || "ALERT")}</span></strong>
+          <div>${escapeHtml(item.message || "No anomaly message")}</div>
+          <small class="muted">Score: ${escapeHtml(formattedScore)} | ${escapeHtml(new Date(item.detected_at || Date.now()).toLocaleString())}</small>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -206,9 +234,9 @@ function renderPipeline() {
     .map(
       ([title, description]) => `
         <article class="pipeline-node">
-          <span>${title}</span>
-          <h3>${title}</h3>
-          <p>${description}</p>
+          <span>${escapeHtml(title)}</span>
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(description)}</p>
         </article>
       `
     )
@@ -217,9 +245,9 @@ function renderPipeline() {
 
 function renderStats(stats) {
   const entries = [
-    ["stat-log-rate", stats.log_rate_per_second?.toFixed?.(2) ?? "0.00"],
+    ["stat-log-rate", Number(stats.log_rate_per_second || 0).toFixed(2)],
     ["stat-logs-hour", numberFormat(stats.logs_last_hour)],
-    ["stat-anomaly-rate", `${stats.anomaly_rate_percent ?? 0}%`],
+    ["stat-anomaly-rate", `${Number(stats.anomaly_rate_percent || 0)}%`],
     ["stat-total-anomalies", numberFormat(stats.total_anomalies)],
   ];
   entries.forEach(([id, value]) => {
@@ -228,23 +256,40 @@ function renderStats(stats) {
   });
 }
 
+let inFlight = false;
+
+async function refreshPage(page, forceFresh = false) {
+  if (inFlight) return;
+  inFlight = true;
+  try {
+    const data = await loadDashboardData(forceFresh);
+    if (page === "landing") {
+      renderLanding(data);
+    } else if (page === "dashboard") {
+      updateStatusBadge("live-status-pill", data);
+      renderStats(data.stats);
+      renderBars(data.logs, "service-bars");
+      renderPills(data.logs);
+      renderLogs(data.logs);
+      renderAnomalies(data.anomalies);
+    }
+  } finally {
+    inFlight = false;
+  }
+}
+
 async function init() {
   const page = document.body.dataset.page;
-  const data = await loadDashboardData();
-
-  if (page === "landing") {
-    renderLanding(data.stats, data.logs);
-    return;
-  }
-
   if (page === "dashboard") {
-    renderStats(data.stats);
-    renderBars(data.logs, "service-bars");
-    renderPills(data.logs);
-    renderLogs(data.logs);
-    renderAnomalies(data.anomalies);
     renderPipeline();
+    const refreshBtn = document.getElementById("refresh-dashboard-btn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => refreshPage(page, true));
+    }
   }
+
+  await refreshPage(page, false);
+  setInterval(() => refreshPage(page, false), POLL_INTERVAL_MS);
 }
 
 init();

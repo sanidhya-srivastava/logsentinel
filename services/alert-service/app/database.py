@@ -48,23 +48,23 @@ logger = logging.getLogger(__name__)
 
 CREATE_ALERTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS alerts (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    alert_id             UUID UNIQUE NOT NULL,
-    log_id               UUID,
-    service              VARCHAR(255),
-    level                VARCHAR(20),
+    id                   SERIAL PRIMARY KEY,
+    alert_id             TEXT UNIQUE NOT NULL,
+    log_id               TEXT,
+    service              TEXT,
+    level                TEXT,
     message              TEXT,
     anomaly_score        DOUBLE PRECISION,
-    host                 VARCHAR(255),
+    host                 TEXT,
     response_time_ms     DOUBLE PRECISION,
     error_code           INTEGER,
-    detected_at          TIMESTAMPTZ,
+    detected_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     slack_sent           BOOLEAN DEFAULT FALSE,
     email_sent           BOOLEAN DEFAULT FALSE,
     deduplicated         BOOLEAN DEFAULT FALSE,
     notification_channels TEXT[],
     features             JSONB,
-    created_at           TIMESTAMPTZ DEFAULT NOW()
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
 
@@ -446,9 +446,13 @@ class DatabaseClient:
             email_sent = "email" in channels
             deduplicated = bool(alert.get("deduplicated", False))
 
-            # features JSONB — serialise to JSON string for asyncpg
+            # features JSONB — codec registered in _init_connection calls json.dumps
             features = alert.get("features")
-            features_json = json.dumps(features) if features else None
+            if isinstance(features, str):
+                try:
+                    features = json.loads(features)
+                except ValueError:
+                    features = None
 
             # Safely cast numeric fields
             anomaly_score = _safe_float(alert.get("anomaly_score"))
@@ -458,8 +462,8 @@ class DatabaseClient:
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     INSERT_ALERT_SQL,
-                    alert_id,  # $1  alert_id UUID
-                    log_id,  # $2  log_id UUID
+                    str(alert_id),  # $1  alert_id TEXT
+                    str(log_id) if log_id else None,  # $2  log_id TEXT
                     _safe_str(alert.get("service")),  # $3  service
                     _safe_str(alert.get("level")),  # $4  level
                     _safe_str(alert.get("message")),  # $5  message
@@ -472,7 +476,7 @@ class DatabaseClient:
                     email_sent,  # $12 email_sent
                     deduplicated,  # $13 deduplicated
                     channels or None,  # $14 notification_channels TEXT[]
-                    features_json,  # $15 features JSONB
+                    features,  # $15 features JSONB
                 )
 
             logger.debug(

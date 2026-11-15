@@ -4,11 +4,26 @@ LogSentinel — Log Processor: Configuration
 All configuration loaded from environment variables via pydantic-settings.
 """
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    from pydantic import BaseModel
+
+    class SettingsConfigDict(dict):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+
+    class BaseSettings(BaseModel):
+        def __init__(self, **values: Any) -> None:
+            env = {k: os.environ[k] for k in type(self).model_fields if k in os.environ}
+            env.update(values)
+            super().__init__(**env)
 
 
 class Settings(BaseSettings):

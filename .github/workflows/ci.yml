@@ -1,0 +1,135 @@
+name: LogSentinel CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install flake8 black isort pytest pytest-cov pytest-asyncio httpx
+
+      - name: Run Linters
+        run: |
+          black --check --diff services/ ml/ || true
+          flake8 services/ ml/ --max-line-length=100 --exclude=__pycache__,.venv,migrations --ignore=E203,W503 || true
+          isort --profile black --check-only --diff services/ ml/ || true
+
+      - name: Run Unit Tests
+        run: |
+          python -m pytest tests/unit/ -v --tb=short
+
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Frontend Dependencies
+        working-directory: services/dashboard-frontend
+        run: npm ci || npm install
+
+      - name: Lint Frontend
+        working-directory: services/dashboard-frontend
+        run: npm run lint
+
+      - name: Build Frontend
+        working-directory: services/dashboard-frontend
+        run: npm run build
+
+  ml-engine-check:
+    name: ML Model Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install ML Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install scikit-learn pandas numpy joblib
+
+      - name: Train and Evaluate Model
+        run: |
+          python ml/train.py
+          python ml/evaluate.py
+
+  docker-build:
+    name: Docker Build Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Microservice Images
+        run: |
+          for svc in log-ingestion-api log-processor ml-engine alert-service dashboard-backend; do
+            echo "=== Building $svc ==="
+            docker build -t logsentinel-$svc:ci services/$svc/
+          done
+
+  slack-notify:
+    name: Slack CI Notification
+    needs: [lint-and-test, frontend-build, ml-engine-check, docker-build]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Slack Notification (Optional)
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          STATUS="${{ contains(needs.*.result, 'failure') && 'FAILED ❌' || 'PASSED ✅' }}"
+          COLOR="${{ contains(needs.*.result, 'failure') && '#FF0000' || '#36a64f' }}"
+          PAYLOAD=$(cat <<EOF
+          {
+            "attachments": [
+              {
+                "color": "$COLOR",
+                "title": "LogSentinel GitHub Actions CI: $STATUS",
+                "text": "Commit by *${{ github.actor }}* on branch \`${{ github.ref_name }}\`\\n*Commit:* ${{ github.event.head_commit.message }}",
+                "footer": "LogSentinel CI/CD",
+                "ts": $(date +%s)
+              }
+            ]
+          }
+          EOF
+          )
+          curl -s -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL" || true

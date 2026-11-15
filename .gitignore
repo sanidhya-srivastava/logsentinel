@@ -17,7 +17,13 @@ ml/models/evaluation_report.json
 
 # Environment secrets
 .env
+.env.*
+!.env.example
 *.tfvars
+*.tfvars.json
+*.pem
+*.key
+*.cert
 terraform.tfstate
 terraform.tfstate.backup
 .terraform/

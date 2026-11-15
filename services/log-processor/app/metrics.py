@@ -26,7 +26,21 @@ Usage:
     PROCESSING_DURATION.observe(0.045)
 """
 
-from prometheus_client import Counter, Gauge, Histogram
+try:
+    from prometheus_client import Counter, Gauge, Histogram, start_http_server
+except ImportError:
+    class _DummyMetric:
+        def __init__(self, *args, **kwargs): pass
+        def labels(self, *args, **kwargs): return self
+        def inc(self, *args, **kwargs): pass
+        def dec(self, *args, **kwargs): pass
+        def set(self, *args, **kwargs): pass
+        def observe(self, *args, **kwargs): pass
+
+    Counter = Gauge = Histogram = _DummyMetric  # type: ignore
+
+    def start_http_server(port, addr=""):
+        pass
 
 # ---------------------------------------------------------------------------
 # Labels

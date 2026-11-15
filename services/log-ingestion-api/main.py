@@ -22,17 +22,18 @@ from app.kafka_producer import KafkaProducerClient
 from app.logger import get_logger
 from app.metrics import (
     BATCH_SIZE_HISTOGRAM,
+    KAFKA_PRODUCER_CONNECTED,
     KAFKA_PUBLISH_ERRORS,
     KAFKA_PUBLISH_SUCCESS,
     LOGS_INGESTED,
     REQUEST_COUNT,
     REQUEST_LATENCY,
+    make_asgi_app,
 )
 from app.models import BatchIngestRequest, BatchIngestResponse, IngestResponse, LogEntry
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
 
 logger = get_logger(__name__)
 
@@ -64,14 +65,17 @@ async def lifespan(app: FastAPI):
         kafka_producer = KafkaProducerClient(
             bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
             topic=settings.KAFKA_TOPIC_RAW_LOGS,
+            acks=settings.kafka_producer_acks,
         )
         await kafka_producer.start()
+        KAFKA_PRODUCER_CONNECTED.set(1)
         logger.info(
             "Kafka producer connected",
             extra={"topic": settings.KAFKA_TOPIC_RAW_LOGS},
         )
     except Exception as exc:
         logger.error("Failed to connect Kafka producer on startup", exc_info=exc)
+        KAFKA_PRODUCER_CONNECTED.set(0)
         # Allow service to start in degraded mode; health check will surface this.
 
     yield
@@ -84,6 +88,8 @@ async def lifespan(app: FastAPI):
             logger.info("Kafka producer stopped cleanly")
         except Exception as exc:
             logger.error("Error stopping Kafka producer", exc_info=exc)
+        finally:
+            KAFKA_PRODUCER_CONNECTED.set(0)
 
 
 # ---------------------------------------------------------------------------

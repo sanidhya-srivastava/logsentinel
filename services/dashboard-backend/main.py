@@ -21,13 +21,12 @@ from app.config import settings
 from app.database import DashboardDB
 from app.elasticsearch_client import DashboardESClient
 from app.logger import get_logger
-from app.metrics import REQUEST_COUNT, REQUEST_LATENCY
+from app.metrics import REQUEST_COUNT, REQUEST_LATENCY, make_asgi_app
 from app.redis_cache import RedisCache
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from prometheus_client import make_asgi_app
 
 logger = get_logger(__name__)
 
@@ -270,6 +269,7 @@ async def get_stats(
         le=1440,
         description="Time window in minutes for rate calculations",
     ),
+    nocache: bool = Query(default=False, description="Bypass Redis cache for fresh stats"),
 ):
     """
     System-wide statistics: log rate, anomaly rate, top services.
@@ -278,7 +278,7 @@ async def get_stats(
     cache_key = f"stats:{window_minutes}"
 
     # Try cache first
-    if cache and cache.is_connected:
+    if not nocache and cache and cache.is_connected:
         cached = await cache.get(cache_key)
         if cached:
             logger.debug("Stats served from cache", extra={"cache_key": cache_key})
@@ -311,7 +311,12 @@ async def get_stats(
         )
     else:
         stats.update(
-            {"logs_last_minute": 0, "logs_last_hour": 0, "log_rate_per_second": 0}
+            {
+                "logs_last_minute": 0,
+                "logs_last_hour": 0,
+                f"logs_last_{window_minutes}m": 0,
+                "log_rate_per_second": 0,
+            }
         )
 
     # Anomaly counts from PostgreSQL
@@ -342,12 +347,24 @@ async def get_stats(
 
 def _serialise_alert(alert: dict) -> dict:
     """Convert asyncpg Record / dict to JSON-serialisable dict."""
+    import json
+    from uuid import UUID
+
     result = {}
     for k, v in alert.items():
         if isinstance(v, datetime):
             result[k] = v.isoformat()
+        elif isinstance(v, UUID):
+            result[k] = str(v)
+        elif k in ("features", "anomaly_features") and isinstance(v, str):
+            try:
+                result[k] = json.loads(v)
+            except ValueError:
+                result[k] = v
         else:
             result[k] = v
+    if "score" not in result and "anomaly_score" in result:
+        result["score"] = result["anomaly_score"]
     return result
 
 

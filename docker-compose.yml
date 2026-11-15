@@ -14,7 +14,7 @@
 #   make health      → check health endpoints
 # =============================================================================
 
-version: "3.9"
+
 
 # ---------------------------------------------------------------------------
 # Shared defaults via YAML anchors
@@ -609,10 +609,13 @@ services:
 
   # ---------------------------------------------------------------------------
   # Node Exporter — host/container metrics for Prometheus
+  # NOTE: Only works on Linux hosts. On Windows Docker Desktop, skip with:
+  #   docker compose --profile linux up
   # ---------------------------------------------------------------------------
   node-exporter:
     image: prom/node-exporter:v1.7.0
     container_name: logsentinel-node-exporter
+    profiles: ["linux"]
     <<: *default-restart
     command:
       - "--path.rootfs=/host"

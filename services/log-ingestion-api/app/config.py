@@ -9,11 +9,26 @@ Usage:
     print(settings.KAFKA_BOOTSTRAP_SERVERS)
 """
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    from pydantic import BaseModel
+
+    class SettingsConfigDict(dict):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+
+    class BaseSettings(BaseModel):
+        def __init__(self, **values: Any) -> None:
+            env = {k: os.environ[k] for k in type(self).model_fields if k in os.environ}
+            env.update(values)
+            super().__init__(**env)
 
 
 class Settings(BaseSettings):
@@ -92,7 +107,7 @@ class Settings(BaseSettings):
     )
 
     KAFKA_PRODUCER_ACKS: str = Field(
-        default="all",
+        default="1",
         description=(
             "Kafka producer acknowledgement mode. "
             "'all' = strongest durability guarantee (wait for all replicas). "
@@ -100,6 +115,16 @@ class Settings(BaseSettings):
             "'0'   = fire and forget."
         ),
     )
+
+    @property
+    def kafka_producer_acks(self) -> int | str:
+        """Return acks as int when it's a numeric string, else return as-is ('all')."""
+        if self.KAFKA_PRODUCER_ACKS == "all":
+            return "all"
+        try:
+            return int(self.KAFKA_PRODUCER_ACKS)
+        except ValueError:
+            return 1  # safe fallback
 
     KAFKA_PRODUCER_RETRIES: int = Field(
         default=5,

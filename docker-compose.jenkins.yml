@@ -26,4 +26,5 @@ volumes:
 
 networks:
   logsentinel-net:
-    driver: bridge
+    name: logsentinel-net
+    external: true
